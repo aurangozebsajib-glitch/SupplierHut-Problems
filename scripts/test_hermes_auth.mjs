@@ -36,6 +36,7 @@ await expectStatus('/capabilities', `Bearer ${token}x`, 401);
 const capabilitiesResponse = await expectStatus('/capabilities', bearer, 200);
 const capabilities = await capabilitiesResponse.json();
 assert.equal(capabilities.writes_enabled, false);
+assert.equal(capabilities.access_mode, 'read_only');
 assert.deepEqual(capabilities.problem_statuses, ['Evidence Supported', 'Validated']);
 assert.deepEqual(
   capabilities.operations.map(({ method, path }) => `${method} ${path}`).sort(),
@@ -43,6 +44,7 @@ assert.deepEqual(
     'GET /analytics',
     'GET /capabilities',
     'GET /health',
+    'GET /openapi.json',
     'GET /problems',
     'GET /problems/{id}',
   ].sort()
@@ -62,6 +64,10 @@ await expectStatus(`/problems/${encodeURIComponent('invalid.id')}`, bearer, 400)
 const listResponse = await expectStatus('/problems?limit=5&offset=0', bearer, 200);
 const listing = await listResponse.json();
 assert.equal(typeof listing.total, 'number');
+assert.ok(['database', 'seed_data'].includes(listing.data_source));
+if (process.env.EXPECTED_DATA_SOURCE) {
+  assert.equal(listing.data_source, process.env.EXPECTED_DATA_SOURCE);
+}
 assert.equal(listing.limit, 5);
 assert.equal(listing.offset, 0);
 assert.ok(Array.isArray(listing.problems));
@@ -80,7 +86,17 @@ const detailExpectedStatus = listing.problems.length > 0 ? 200 : 404;
 const detailResponse = await expectStatus(`/problems/${encodeURIComponent(detailId)}`, bearer, detailExpectedStatus);
 if (detailExpectedStatus === 200) {
   const detail = await detailResponse.json();
+  assert.ok(
+    detail.data_source === 'database' || detail.data_source === 'seed_data',
+    `Unexpected detail data_source: ${detail.data_source}`
+  );
+  if (process.env.EXPECTED_DATA_SOURCE) {
+    assert.equal(detail.data_source, process.env.EXPECTED_DATA_SOURCE);
+  }
   assert.equal(detail.problem.id, detailId);
+  assert.equal(typeof detail.problem.title, 'string');
+  assert.equal(Object.hasOwn(detail.problem, 'problem'), false);
+  assert.equal(Object.hasOwn(detail.problem, 'data_source'), false);
   assert.ok(['Evidence Supported', 'Validated'].includes(detail.problem.validationStatus));
   assert.equal(Object.hasOwn(detail.problem, 'reportedBy'), false);
 }
@@ -88,6 +104,10 @@ if (detailExpectedStatus === 200) {
 const analyticsResponse = await expectStatus('/analytics', bearer, 200);
 const analytics = await analyticsResponse.json();
 assert.equal(typeof analytics.total, 'number');
+assert.ok(['database', 'seed_data'].includes(analytics.data_source));
+if (process.env.EXPECTED_DATA_SOURCE) {
+  assert.equal(analytics.data_source, process.env.EXPECTED_DATA_SOURCE);
+}
 assert.equal(typeof analytics.by_validation_status, 'object');
 assert.deepEqual(Object.keys(analytics.by_validation_status).sort(), [
   'Evidence Supported',
@@ -104,5 +124,8 @@ const openApiResponse = await expectStatus('/openapi.json', undefined, 200);
 const openApi = await openApiResponse.json();
 assert.ok(openApi.paths['/problems']);
 assert.ok(openApi.paths['/analytics']);
+for (const operation of capabilities.operations) {
+  assert.ok(openApi.paths[operation.path]?.[operation.method.toLowerCase()]);
+}
 
 console.log('Hermes API authorization, validation, read-only, and response-shape tests passed.');

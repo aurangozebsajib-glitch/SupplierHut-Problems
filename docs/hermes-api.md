@@ -2,6 +2,8 @@
 
 এই API Hermes-কে website-এর problem record ও সীমিত aggregate metric **শুধু পড়তে** দেয়। এটি website-এর Clerk login/admin authorization-এর বিকল্প নয় এবং কোনো write operation দেয় না।
 
+সম্পূর্ণ বর্তমান website/API capability inventory ও write-API blockers: [hermes-capability-inventory.md](./hermes-capability-inventory.md)।
+
 ## অনুমোদিত read
 
 | Method | Path | অনুমতি | কাজ |
@@ -15,7 +17,11 @@
 
 Hermes শুধু `Evidence Supported` ও `Validated` status-এর record পড়তে পারে। এই allowlist list/count SQL, server-memory fallback, detail lookup ও analytics—সবখানে enforce করা হয়। List-এ `status` filter-এ অন্য status দিলে `400` হয়; অনুমোদিত status-এর বাইরে থাকা detail record `404` হয়। Analytics-এ কেবল এই দুই status-এর key থাকে।
 
-সব private endpoint-এ `Authorization: Bearer …` প্রয়োজন। Token না থাকলে/ভুল হলে `401`; server-এ token configure না থাকলে private call-এ `503`। Invalid query বা ID-তে `400`; unavailable data-তে `503`। Error response-এ stack trace বা database details দেওয়া হয় না।
+সব private endpoint-এ `Authorization: Bearer …` প্রয়োজন। Token না থাকলে/ভুল হলে `401`; server-এ token configure না থাকলে private call-এ `503`। Invalid query বা ID-তে `400`। কোনো database query ব্যর্থ হলে list, detail ও analytics fallback হিসেবে server seed data দিতে পারে; response-এর `data_source` হবে `seed_data`, আর Neon থেকে সফল query হলে `database`। ফলে fallback record-কে live Neon record বলে ভুল করা যাবে না। Error response-এ stack trace বা database details দেওয়া হয় না।
+
+`data_source: "database"` মানে ওই response-এর রেকর্ড বা metric Neon query থেকে এসেছে; এটি website-এর সব data-র সঙ্গে synchronization বা authoritative website data হওয়া প্রমাণ করে না। `data_source: "seed_data"` মানে server-side seed fallback ব্যবহৃত হয়েছে—এটি live Neon বা authoritative website record নয়। Database configure না থাকলে বা query ব্যর্থ হলে list/detail/analytics seed fallback দিতে পারে। Detail lookup-এ database query সফল হলেও requested record না মিললে matching seed record থাকলে সেটিও `seed_data` হিসেবে ফেরে।
+
+List ও analytics response-এ `data_source` থাকে। Detail response-এর format `{ "problem": { ...AgentProblem fields... }, "data_source": "database" | "seed_data" }`; `problem` সরাসরি record object, nested wrapper নয়।
 
 ## Token configuration
 
@@ -74,7 +80,7 @@ Deployment-এর পরে নিজের deployment URL-এ health, authentic
 
 ## Data source, সীমাবদ্ধতা ও migration সতর্কতা
 
-- Database configured থাকলে API Neon-এর `platform_problems` table পড়ে; read ব্যর্থ হলে `503` দেয়। Database configure না থাকলে server-side seeded data fallback হয়।
+- Database configured থাকলে API Neon-এর `platform_problems` table পড়ে। Database query ব্যর্থ হলে list/detail/analytics server-side seeded data fallback-এ যেতে পারে, response-এ `data_source: "seed_data"` দিয়ে তা চিহ্নিত করে। Database configure না থাকলেও seed data source স্পষ্টভাবে ফেরত আসে।
 - Website-এ browser-এর `localStorage` (`supplierhut_problems_v1`) এবং server-side seed/in-memory store ব্যবহৃত হয়; website submission/admin actions Neon-এ স্বয়ংক্রিয়ভাবে sync হয় না। Browser `localStorage` server API পড়তে পারে না। তাই website ও API-র record-set এক নয়/একই—এমন নিশ্চয়তা নেই।
 - কোনো database migration, data import, cutover বা backup এই কাজের মধ্যে হয়নি। ভবিষ্যতে shared source of truth স্থাপনের আগে browser export, seed ও Neon-এর আলাদা backup নিয়ে records human-review করে duplicate reconciliation করতে হবে। Backup যাচাই ও লিখিত অনুমোদন ছাড়া কোনো import, overwrite বা delete নয়।
 - Response-এ কেবল allowlisted problem fields থাকে; reporter identity ও proposal/report/user/audit data প্রকাশ করা হয় না। Text field সীমিত দৈর্ঘ্যে ফেরে।
