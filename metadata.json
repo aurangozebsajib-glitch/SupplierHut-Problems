@@ -1,0 +1,8 @@
+{
+  "name": "SupplierHut Solutions - Bangladesh Problem & Income Platform",
+  "description": "Discover validated problems affecting Bangladesh, analyze market viability, research real customer demand, and participate in structured earning opportunities and paid challenges.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
