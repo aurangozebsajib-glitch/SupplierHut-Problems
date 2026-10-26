@@ -289,47 +289,53 @@ export async function listAgentProblems(filters: ProblemFilters): Promise<{
   limit: number;
   offset: number;
   problems: AgentProblem[];
+  data_source: 'database' | 'seed_data';
 }> {
   const sql = getConfiguredDb();
   if (sql) {
-    const totalRows = (await sql`
-      SELECT count(*)::int AS total
-      FROM platform_problems
-      WHERE (${filters.q ?? null}::text IS NULL
-        OR title ILIKE ${filters.q ? `%${filters.q}%` : null}
-        OR summary ILIKE ${filters.q ? `%${filters.q}%` : null}
-        OR location ILIKE ${filters.q ? `%${filters.q}%` : null})
-        AND validation_status IN ('Evidence Supported', 'Validated')
-        AND (${filters.sector ?? null}::text IS NULL OR sector = ${filters.sector ?? null})
-        AND (${filters.status ?? null}::text IS NULL OR validation_status = ${filters.status ?? null})
-        AND (${filters.division ?? null}::text IS NULL OR division = ${filters.division ?? null})
-        AND (${filters.opportunityType ?? null}::text IS NULL OR opportunity_type = ${filters.opportunityType ?? null})
-    `) as unknown as CountRow[];
-    const rows = (await sql`
-      SELECT id, slug, title, summary, full_description, sector, location, division,
-        affected_customer_type, validation_status, confidence_score_percent,
-        opportunity_type, difficulty, estimated_startup_cost_min,
-        estimated_startup_cost_max, time_to_first_test, featured, created_at, updated_at
-      FROM platform_problems
-      WHERE (${filters.q ?? null}::text IS NULL
-        OR title ILIKE ${filters.q ? `%${filters.q}%` : null}
-        OR summary ILIKE ${filters.q ? `%${filters.q}%` : null}
-        OR location ILIKE ${filters.q ? `%${filters.q}%` : null})
-        AND validation_status IN ('Evidence Supported', 'Validated')
-        AND (${filters.sector ?? null}::text IS NULL OR sector = ${filters.sector ?? null})
-        AND (${filters.status ?? null}::text IS NULL OR validation_status = ${filters.status ?? null})
-        AND (${filters.division ?? null}::text IS NULL OR division = ${filters.division ?? null})
-        AND (${filters.opportunityType ?? null}::text IS NULL OR opportunity_type = ${filters.opportunityType ?? null})
-      ORDER BY created_at DESC, id ASC
-      LIMIT ${filters.limit} OFFSET ${filters.offset}
-    `) as unknown as ProblemRow[];
+    try {
+      const totalRows = (await sql`
+        SELECT count(*)::int AS total
+        FROM platform_problems
+        WHERE (${filters.q ?? null}::text IS NULL
+          OR title ILIKE ${filters.q ? `%${filters.q}%` : null}
+          OR summary ILIKE ${filters.q ? `%${filters.q}%` : null}
+          OR location ILIKE ${filters.q ? `%${filters.q}%` : null})
+          AND validation_status IN ('Evidence Supported', 'Validated')
+          AND (${filters.sector ?? null}::text IS NULL OR sector = ${filters.sector ?? null})
+          AND (${filters.status ?? null}::text IS NULL OR validation_status = ${filters.status ?? null})
+          AND (${filters.division ?? null}::text IS NULL OR division = ${filters.division ?? null})
+          AND (${filters.opportunityType ?? null}::text IS NULL OR opportunity_type = ${filters.opportunityType ?? null})
+      `) as unknown as CountRow[];
+      const rows = (await sql`
+        SELECT id, slug, title, summary, full_description, sector, location, division,
+          affected_customer_type, validation_status, confidence_score_percent,
+          opportunity_type, difficulty, estimated_startup_cost_min,
+          estimated_startup_cost_max, time_to_first_test, featured, created_at, updated_at
+        FROM platform_problems
+        WHERE (${filters.q ?? null}::text IS NULL
+          OR title ILIKE ${filters.q ? `%${filters.q}%` : null}
+          OR summary ILIKE ${filters.q ? `%${filters.q}%` : null}
+          OR location ILIKE ${filters.q ? `%${filters.q}%` : null})
+          AND validation_status IN ('Evidence Supported', 'Validated')
+          AND (${filters.sector ?? null}::text IS NULL OR sector = ${filters.sector ?? null})
+          AND (${filters.status ?? null}::text IS NULL OR validation_status = ${filters.status ?? null})
+          AND (${filters.division ?? null}::text IS NULL OR division = ${filters.division ?? null})
+          AND (${filters.opportunityType ?? null}::text IS NULL OR opportunity_type = ${filters.opportunityType ?? null})
+        ORDER BY created_at DESC, id ASC
+        LIMIT ${filters.limit} OFFSET ${filters.offset}
+      `) as unknown as ProblemRow[];
 
-    return {
-      total: optionalNumber(totalRows[0]?.total) ?? 0,
-      limit: filters.limit,
-      offset: filters.offset,
-      problems: rows.map(rowToAgentProblem),
-    };
+      return {
+        total: optionalNumber(totalRows[0]?.total) ?? 0,
+        limit: filters.limit,
+        offset: filters.offset,
+        problems: rows.map(rowToAgentProblem),
+        data_source: 'database',
+      };
+    } catch {
+      console.error('Hermes API problem query failed; serving seed fallback.');
+    }
   }
 
   const matches = getStoredProblems().filter((problem) => matchesFilters(problem, filters));
@@ -338,24 +344,31 @@ export async function listAgentProblems(filters: ProblemFilters): Promise<{
     limit: filters.limit,
     offset: filters.offset,
     problems: matches.slice(filters.offset, filters.offset + filters.limit).map(toAgentProblem),
+    data_source: 'seed_data',
   };
 }
 
-export async function getAgentProblem(id: string): Promise<AgentProblem | null> {
+export async function getAgentProblem(id: string): Promise<{ problem: AgentProblem; data_source: 'database' | 'seed_data' } | null> {
   const sql = getConfiguredDb();
   if (sql) {
-    const rows = (await sql`
-      SELECT id, slug, title, summary, full_description, sector, location, division,
-        affected_customer_type, validation_status, confidence_score_percent,
-        opportunity_type, difficulty, estimated_startup_cost_min,
-        estimated_startup_cost_max, time_to_first_test, featured, created_at, updated_at
-      FROM platform_problems
-      WHERE (id = ${id} OR slug = ${id})
-        AND validation_status IN ('Evidence Supported', 'Validated')
-      ORDER BY CASE WHEN id = ${id} THEN 0 ELSE 1 END
-      LIMIT 1
-    `) as unknown as ProblemRow[];
-    return rows[0] ? rowToAgentProblem(rows[0]) : null;
+    try {
+      const rows = (await sql`
+        SELECT id, slug, title, summary, full_description, sector, location, division,
+          affected_customer_type, validation_status, confidence_score_percent,
+          opportunity_type, difficulty, estimated_startup_cost_min,
+          estimated_startup_cost_max, time_to_first_test, featured, created_at, updated_at
+        FROM platform_problems
+        WHERE (id = ${id} OR slug = ${id})
+          AND validation_status IN ('Evidence Supported', 'Validated')
+        ORDER BY CASE WHEN id = ${id} THEN 0 ELSE 1 END
+        LIMIT 1
+      `) as unknown as ProblemRow[];
+      if (rows[0]) {
+        return { problem: rowToAgentProblem(rows[0]), data_source: 'database' };
+      }
+    } catch {
+      console.error('Hermes API problem lookup failed; serving seed fallback.');
+    }
   }
 
   const problem = getStoredProblems().find(
@@ -363,38 +376,47 @@ export async function getAgentProblem(id: string): Promise<AgentProblem | null> 
       (record.id === id || record.slug === id) &&
       isOneOf(record.validationStatus, AGENT_ALLOWED_STATUSES)
   );
-  return problem ? toAgentProblem(problem) : null;
+  if (problem) {
+    return { problem: toAgentProblem(problem), data_source: 'seed_data' };
+  }
+  return null;
 }
 
 export async function getAgentAnalytics(): Promise<{
   total: number;
   by_validation_status: Record<string, number>;
+  data_source: 'database' | 'seed_data';
 }> {
   const sql = getConfiguredDb();
   if (sql) {
-    const rows = (await sql`
-      SELECT validation_status AS status,
-        count(*)::int AS count
-      FROM platform_problems
-      WHERE validation_status IN ('Evidence Supported', 'Validated')
-      GROUP BY validation_status
-      ORDER BY status
-    `) as unknown as StatusCountRow[];
+    try {
+      const rows = (await sql`
+        SELECT validation_status AS status,
+          count(*)::int AS count
+        FROM platform_problems
+        WHERE validation_status IN ('Evidence Supported', 'Validated')
+        GROUP BY validation_status
+        ORDER BY status
+      `) as unknown as StatusCountRow[];
 
-    const byValidationStatus: Record<string, number> = {
-      'Evidence Supported': 0,
-      Validated: 0,
-    };
-    for (const row of rows) {
-      const status = String(row.status);
-      if (isOneOf(status, AGENT_ALLOWED_STATUSES)) {
-        byValidationStatus[status] = optionalNumber(row.count) ?? 0;
+      const byValidationStatus: Record<string, number> = {
+        'Evidence Supported': 0,
+        Validated: 0,
+      };
+      for (const row of rows) {
+        const status = String(row.status);
+        if (isOneOf(status, AGENT_ALLOWED_STATUSES)) {
+          byValidationStatus[status] = optionalNumber(row.count) ?? 0;
+        }
       }
+      return {
+        total: Object.values(byValidationStatus).reduce((total, count) => total + count, 0),
+        by_validation_status: byValidationStatus,
+        data_source: 'database',
+      };
+    } catch {
+      console.error('Hermes API analytics query failed; serving seed fallback.');
     }
-    return {
-      total: Object.values(byValidationStatus).reduce((total, count) => total + count, 0),
-      by_validation_status: byValidationStatus,
-    };
   }
 
   const byValidationStatus: Record<string, number> = {
@@ -409,5 +431,6 @@ export async function getAgentAnalytics(): Promise<{
   return {
     total: Object.values(byValidationStatus).reduce((total, count) => total + count, 0),
     by_validation_status: byValidationStatus,
+    data_source: 'seed_data',
   };
 }

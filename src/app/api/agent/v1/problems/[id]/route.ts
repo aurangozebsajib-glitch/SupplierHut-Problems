@@ -18,15 +18,15 @@ export async function GET(
   }
 
   try {
-    const problem = await getAgentProblem(id);
-    if (!problem) {
+    const result = await getAgentProblem(id);
+    if (!result) {
       return NextResponse.json(
         { error: 'Problem not found.' },
         { status: 404, headers: { 'Cache-Control': 'private, no-store' } }
       );
     }
 
-    return NextResponse.json({ problem }, {
+    return NextResponse.json(result, {
       headers: { 'Cache-Control': 'private, no-store' },
     });
   } catch {
