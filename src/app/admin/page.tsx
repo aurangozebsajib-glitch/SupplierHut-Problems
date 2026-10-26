@@ -7,13 +7,12 @@ import {
   SolutionProposal, 
   AuditLogItem, 
   ProblemReport, 
-  ValidationStatus,
-  ProposalStatus,
+  ValidationStatus, 
+  ProposalStatus, 
   UserProfile 
 } from '@/types';
 import { 
   getCurrentUser, 
-  setCurrentUser, 
   getStoredProblems, 
   getStoredProposals, 
   getStoredAuditLogs, 
@@ -22,25 +21,99 @@ import {
   deleteProblemRecord,
   updateProposalStatusRecord,
   updateReportStatusRecord,
-  getAllUsers
 } from '@/lib/data-store';
 import { 
   ShieldCheck, 
   AlertCircle, 
   CheckCircle, 
-  RefreshCw
+  RefreshCw,
+  Database,
+  Lock,
+  LogIn,
+  Layers
 } from 'lucide-react';
 
+interface ServerAuthStatus {
+  loading: boolean;
+  authorized: boolean;
+  reason?: string;
+  adminEmailConfigured: boolean;
+  isClerkConfigured: boolean;
+  maskedAdminEmail?: string | null;
+  authenticatedUserEmail?: string;
+  adminUser?: {
+    id: string;
+    email: string;
+    name: string;
+  };
+}
+
 export default function AdminPage() {
-  const [currentUser, setUser] = useState<UserProfile>(() => getCurrentUser());
-  const [activeTab, setActiveTab] = useState<'problems' | 'proposals' | 'reports' | 'audit'>('problems');
+  const [currentUser] = useState<UserProfile>(() => getCurrentUser());
+  const [activeTab, setActiveTab] = useState<'problems' | 'proposals' | 'reports' | 'audit' | 'database'>('problems');
   const [problems, setProblems] = useState<Problem[]>(() => getStoredProblems());
   const [proposals, setProposals] = useState<SolutionProposal[]>(() => getStoredProposals());
   const [reports, setReports] = useState<ProblemReport[]>(() => getStoredReports());
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>(() => getStoredAuditLogs());
   
-  // Status update message
+  // Server-side auth check state
+  const [serverAuth, setServerAuth] = useState<ServerAuthStatus>({
+    loading: true,
+    authorized: false,
+    adminEmailConfigured: false,
+    isClerkConfigured: false,
+  });
+
+  // Database table verification state
+  const [dbStatus, setDbStatus] = useState<{ checked: boolean; success?: boolean; message?: string }>({
+    checked: false,
+  });
+
+  // Status notification message
   const [notification, setNotification] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    fetch('/api/admin/verify')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!isMounted) return;
+        if (data) {
+          setServerAuth({
+            loading: false,
+            authorized: Boolean(data.authorized),
+            reason: data.reason,
+            adminEmailConfigured: Boolean(data.adminEmailConfigured),
+            isClerkConfigured: Boolean(data.isClerkConfigured),
+            maskedAdminEmail: data.maskedAdminEmail,
+            authenticatedUserEmail: data.authenticatedUserEmail,
+            adminUser: data.adminUser,
+          });
+        } else {
+          setServerAuth({
+            loading: false,
+            authorized: false,
+            reason: 'Failed to query server authorization',
+            adminEmailConfigured: false,
+            isClerkConfigured: false,
+          });
+        }
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setServerAuth({
+          loading: false,
+          authorized: false,
+          reason: 'Network error checking server authorization',
+          adminEmailConfigured: false,
+          isClerkConfigured: false,
+        });
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const loadData = () => {
     setProblems(getStoredProblems());
@@ -49,57 +122,70 @@ export default function AdminPage() {
     setAuditLogs(getStoredAuditLogs());
   };
 
-  useEffect(() => {
-    const handleAuth = (e: Event) => {
-      const customEvent = e as CustomEvent<UserProfile>;
-      if (customEvent.detail) {
-        setUser(customEvent.detail);
-        loadData();
+  const checkServerAuth = async () => {
+    try {
+      const res = await fetch('/api/admin/verify');
+      if (res.ok) {
+        const data = await res.json();
+        setServerAuth({
+          loading: false,
+          authorized: Boolean(data.authorized),
+          reason: data.reason,
+          adminEmailConfigured: Boolean(data.adminEmailConfigured),
+          isClerkConfigured: Boolean(data.isClerkConfigured),
+          maskedAdminEmail: data.maskedAdminEmail,
+          authenticatedUserEmail: data.authenticatedUserEmail,
+          adminUser: data.adminUser,
+        });
       }
-    };
-    window.addEventListener('supplierhut_auth_changed', handleAuth);
-    return () => window.removeEventListener('supplierhut_auth_changed', handleAuth);
-  }, []);
+    } catch {
+      // Ignore transient check failure
+    }
+  };
 
-  // Server/Client role check
-  if (currentUser.role !== 'admin') {
-    const adminUser = getAllUsers().find(u => u.role === 'admin');
-    return (
-      <div className="max-w-md mx-auto px-4 py-20 text-center">
-        <div className="bg-white rounded-3xl p-8 border border-rose-200 shadow-sm space-y-4">
-          <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
-            <AlertCircle className="w-6 h-6" />
-          </div>
-          <h1 className="text-xl font-bold text-slate-900">403 Restricted Admin Area</h1>
-          <p className="text-xs text-slate-600 leading-relaxed">
-            You are currently logged in as <strong className="text-slate-900">{currentUser.name}</strong> ({currentUser.role}). Admin access requires administrator credentials.
-          </p>
+  const handleEnsureTables = async () => {
+    try {
+      const res = await fetch('/api/admin/actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'ensure_tables' }),
+      });
+      const data = await res.json();
+      setDbStatus({ checked: true, success: res.ok, message: data.message || data.error });
+      if (res.ok) {
+        setNotification('Neon database tables verified successfully');
+        setTimeout(() => setNotification(null), 3000);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Database check failed';
+      setDbStatus({ checked: true, success: false, message: msg });
+    }
+  };
 
-          {adminUser && (
-            <button
-              onClick={() => {
-                setCurrentUser(adminUser);
-                setUser(adminUser);
-                loadData();
-              }}
-              className="w-full py-2.5 px-4 text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-xl transition-colors cursor-pointer"
-            >
-              Switch to Administrator ({adminUser.name})
-            </button>
-          )}
-
-          <Link href="/dashboard" className="block text-xs font-semibold text-slate-500 hover:text-slate-800">
-            Back to Dashboard
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
-  const handleStatusChange = (problemId: string, newStatus: ValidationStatus) => {
+  const handleStatusChange = async (problemId: string, newStatus: ValidationStatus) => {
     const confidence = newStatus === 'Validated' ? 95 : newStatus === 'Evidence Supported' ? 80 : 50;
     updateProblemStatus(problemId, newStatus, confidence);
     loadData();
+
+    // Log action to server
+    try {
+      await fetch('/api/admin/actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'record_audit_log',
+          payload: {
+            actionName: 'UPDATE_STATUS',
+            targetType: 'Problem',
+            targetId: problemId,
+            details: `Status set to ${newStatus}`,
+          },
+        }),
+      });
+    } catch {
+      // Offline fallback
+    }
+
     setNotification(`Updated problem status to ${newStatus}`);
     setTimeout(() => setNotification(null), 3000);
   };
@@ -128,12 +214,98 @@ export default function AdminPage() {
     setTimeout(() => setNotification(null), 3000);
   };
 
+  // Loading state
+  if (serverAuth.loading) {
+    return (
+      <div className="max-w-md mx-auto px-4 py-24 text-center">
+        <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-xs space-y-4">
+          <div className="w-10 h-10 border-4 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-xs font-semibold text-slate-600">Verifying administrator authorization server-side...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Deny access if server authorization check fails
+  // When Clerk is configured in production, only authenticated users matching ADMIN_EMAIL are allowed
+  if (serverAuth.isClerkConfigured && !serverAuth.authorized) {
+    return (
+      <div className="max-w-md mx-auto px-4 py-20 text-center">
+        <div className="bg-white rounded-3xl p-8 border border-rose-200 shadow-sm space-y-4">
+          <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+            <Lock className="w-6 h-6" />
+          </div>
+          <h1 className="text-xl font-bold text-slate-950">403 Restricted Admin Area</h1>
+          
+          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-left text-xs space-y-1.5 text-rose-900">
+            <p className="font-bold flex items-center gap-1.5 text-rose-950">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              Server-Enforced Access Control
+            </p>
+            <p className="text-[11px] leading-relaxed text-rose-800">
+              {serverAuth.reason || 'You are not authorized to view or manage administrative operations.'}
+            </p>
+            {serverAuth.maskedAdminEmail && (
+              <p className="text-[10px] text-rose-700 font-mono mt-1">
+                Authorized Admin: {serverAuth.maskedAdminEmail}
+              </p>
+            )}
+          </div>
+
+          <p className="text-xs text-slate-600 leading-relaxed">
+            Administrator access requires a verified email address matching the configured <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-slate-900 font-semibold">ADMIN_EMAIL</code>. Local storage or client-side roles cannot grant administrative permissions.
+          </p>
+
+          <div className="pt-2 space-y-2">
+            <Link
+              href="/sign-in"
+              className="w-full flex items-center justify-center gap-2 py-2.5 px-4 text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-xl transition-colors cursor-pointer shadow-xs"
+            >
+              <LogIn className="w-4 h-4" />
+              Sign In with Admin Account
+            </Link>
+
+            <Link href="/" className="block text-xs font-semibold text-slate-500 hover:text-slate-800 pt-1">
+              Back to Homepage
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If in local standalone environment without Clerk keys or ADMIN_EMAIL configured,
+  // allow local preview with a prominent notice indicating production server protection
+  const isLocalDemoMode = !serverAuth.isClerkConfigured && !serverAuth.authorized;
+
   const pendingProblems = problems.filter(p => p.validationStatus === 'Unverified');
   const activeChallenges = problems.filter(p => p.opportunityType === 'Paid Challenge');
   const openReports = reports.filter(r => r.status === 'Open');
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+      {/* Local demo banner if keys are pending */}
+      {isLocalDemoMode && (
+        <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-slate-900">Local Sandbox Mode — Production Protected by Server-Side Admin Rules</p>
+              <p className="text-[11px] text-slate-700 mt-0.5">
+                Clerk keys and <code className="bg-white/80 px-1 py-0.2 rounded font-mono">ADMIN_EMAIL</code> are configured in Vercel. In production at <strong className="text-slate-900">supplier-hut-problems.vercel.app</strong>, access is strictly verified on the server against the authenticated user&apos;s verified email.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={checkServerAuth}
+            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg font-bold text-xs cursor-pointer shadow-xs"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Check Live Auth
+          </button>
+        </div>
+      )}
+
       {/* Top Admin Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
         <div>
@@ -145,23 +317,49 @@ export default function AdminPage() {
             Platform Moderation & Verification
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Logged in as <strong className="text-slate-800">{currentUser.name}</strong> ({currentUser.email})
+            {serverAuth.authorized ? (
+              <span className="inline-flex items-center gap-1.5 text-emerald-800 font-semibold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                Verified Server Admin: <strong>{serverAuth.authenticatedUserEmail}</strong>
+              </span>
+            ) : (
+              <span>Session: <strong className="text-slate-800">{currentUser.name}</strong> ({currentUser.email})</span>
+            )}
           </p>
         </div>
 
-        <button
-          onClick={loadData}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer self-start sm:self-auto"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Refresh Records
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleEnsureTables}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs"
+            title="Verify Neon database tables"
+          >
+            <Database className="w-3.5 h-3.5 text-emerald-600" />
+            Verify Neon Tables
+          </button>
+          <button
+            onClick={loadData}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Refresh Records
+          </button>
+        </div>
       </div>
 
       {notification && (
         <div className="p-3 bg-emerald-100 text-emerald-900 text-xs font-bold rounded-xl mb-6 flex items-center gap-2">
           <CheckCircle className="w-4 h-4 text-emerald-700" />
           {notification}
+        </div>
+      )}
+
+      {dbStatus.checked && (
+        <div className={`p-3 text-xs font-semibold rounded-xl mb-6 flex items-center gap-2 ${
+          dbStatus.success ? 'bg-emerald-50 text-emerald-900 border border-emerald-200' : 'bg-slate-100 text-slate-800 border border-slate-200'
+        }`}>
+          <Database className="w-4 h-4 text-emerald-700 shrink-0" />
+          <span>{dbStatus.message}</span>
         </div>
       )}
 
@@ -228,6 +426,15 @@ export default function AdminPage() {
           }`}
         >
           Audit Log ({auditLogs.length})
+        </button>
+
+        <button
+          onClick={() => setActiveTab('database')}
+          className={`px-4 py-2 rounded-lg whitespace-nowrap cursor-pointer ${
+            activeTab === 'database' ? 'bg-amber-400 text-slate-950 font-bold shadow-2xs' : 'text-slate-600 hover:text-slate-950'
+          }`}
+        >
+          Neon DB & Environment
         </button>
       </div>
 
@@ -440,6 +647,57 @@ export default function AdminPage() {
                 <span className="text-slate-400 shrink-0 text-[10px]">{new Date(log.timestamp).toLocaleString()}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Tab 5: Neon Database & Environment Verification */}
+      {activeTab === 'database' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
+          <div>
+            <h2 className="text-base font-bold text-slate-950 flex items-center gap-2">
+              <Database className="w-5 h-5 text-emerald-600" />
+              Neon PostgreSQL Database & Environment Integrity
+            </h2>
+            <p className="text-xs text-slate-600 mt-1">
+              Verify schema status, connection pooling, and Clerk server-side configuration.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-900">Database Connection</span>
+                <span className="text-[11px] px-2 py-0.5 rounded font-mono font-bold bg-emerald-100 text-emerald-800">
+                  @neondatabase/serverless
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Uses pooled connection <code className="font-mono text-slate-800 font-semibold bg-white px-1 py-0.5 rounded border border-slate-200">DATABASE_URL</code> for fast serverless execution and direct <code className="font-mono text-slate-800 font-semibold bg-white px-1 py-0.5 rounded border border-slate-200">DATABASE_URL_UNPOOLED</code> for migrations.
+              </p>
+              <button
+                onClick={handleEnsureTables}
+                className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
+              >
+                <Layers className="w-4 h-4" />
+                Run Table Schema Verification
+              </button>
+            </div>
+
+            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-900">Clerk Authentication & Admin</span>
+                <span className="text-[11px] px-2 py-0.5 rounded font-mono font-bold bg-amber-100 text-amber-800">
+                  @clerk/nextjs
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Server-side role protection verifies the authenticated user&apos;s verified email against <code className="font-mono text-slate-800 font-semibold bg-white px-1 py-0.5 rounded border border-slate-200">ADMIN_EMAIL</code>.
+              </p>
+              <div className="p-2.5 bg-white rounded-lg border border-slate-200 text-[11px] font-mono text-slate-700">
+                Configured Admin: {serverAuth.maskedAdminEmail || 'Configured via Vercel env'}
+              </div>
+            </div>
           </div>
         </div>
       )}

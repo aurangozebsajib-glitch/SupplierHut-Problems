@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import RoleSwitcher from './RoleSwitcher';
+import ClerkAuthControls from './ClerkAuthControls';
 import { getCurrentUser } from '@/lib/data-store';
 import { UserProfile } from '@/types';
 import { Menu, X, PlusCircle, ShieldAlert } from 'lucide-react';
@@ -78,9 +79,10 @@ export default function Navbar() {
             )}
           </nav>
 
-          {/* Zone 3: Primary Action & Role Switcher */}
-          <div className="hidden sm:flex items-center gap-3 shrink-0">
+          {/* Zone 3: Primary Action & Role Switcher & Auth */}
+          <div className="hidden sm:flex items-center gap-2.5 shrink-0">
             <RoleSwitcher />
+            <ClerkAuthControls />
             <Link
               href="/submit"
               className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-950 bg-emerald-500 hover:bg-emerald-400 rounded-lg transition-colors whitespace-nowrap shrink-0 shadow-xs"
@@ -92,7 +94,7 @@ export default function Navbar() {
 
           {/* Mobile hamburger */}
           <div className="flex sm:hidden items-center gap-2">
-            <RoleSwitcher />
+            <ClerkAuthControls />
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className="p-2 text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-100"
@@ -126,7 +128,11 @@ export default function Navbar() {
               Admin Panel
             </Link>
           )}
-          <div className="pt-2">
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+            <span className="text-xs text-slate-500 font-medium">Test Role Switcher:</span>
+            <RoleSwitcher />
+          </div>
+          <div className="pt-1">
             <Link
               href="/submit"
               onClick={() => setMobileMenuOpen(false)}

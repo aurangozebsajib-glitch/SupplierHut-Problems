@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
@@ -29,7 +30,9 @@ export default function RootLayout({
   const content = (
     <html lang="en" className="scroll-smooth">
       <body className={`${plusJakartaSans.className} bg-slate-50 text-slate-900 flex flex-col min-h-screen antialiased`}>
-        <Navbar />
+        <Suspense fallback={<header className="sticky top-0 z-40 bg-white border-b border-slate-200 h-16" />}>
+          <Navbar />
+        </Suspense>
         <main className="flex-grow">{children}</main>
         <Footer />
       </body>
